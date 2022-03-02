@@ -22,16 +22,11 @@ data Immediate = Immediate { imm :: Int } deriving ( Show, Eq )
 
 data Argument = ImmArg Immediate | RegArg Register | LabelArg Label deriving ( Show, Eq )
 
--- Label Symbol (Same as Label! Resolve this!!)
--- data Symbol = Symbol { symb :: String } deriving ( Show, Eq )
-
 data Instruction = ADD | AND | BR | JMP | JSR | JSRR | LD | LDI | LDR | LEA | NOT | RET | RTI | ST | STI | STR | TRAP deriving ( Show, Eq )
 
 data AssemblerDirection = ORIGIN | PUT deriving ( Show, Eq )
 
-data Line = InstLine Instruction [Argument] | AssemLine AssemblerDirection [Argument] deriving ( Show, Eq )
-
---data HypotheticalLine = ([Label], (Either Instruction AssemblerDirection), [Either Label Argument])
+data Line = InstLine { inst :: Instruction, args :: [Argument] } | AssemLine { dir :: AssemblerDirection, args :: [Argument] } deriving ( Show, Eq )
 
 main :: IO ()
 main = do
@@ -44,11 +39,11 @@ main = do
         --mapM_ print $ map isSignificantLine tokenlines
         --mapM_ print tokenlines
         let corrected = moveLabelsDown tokenlines
-        let labels = getLabels corrected
         let asmlines = map tokensToLine corrected
-        mapM_ print corrected
-        print asmlines
-        print labels
+        let (origin, rest) = getOrigin asmlines
+        let (symbols, asmlines) = createSymbolTable origin rest
+        mapM_ print symbols
+        mapM_ print asmlines
 
 printUsage :: IO ()
 printUsage = do
@@ -120,7 +115,17 @@ getLabels prg =
     in map (stringToLabel . str) tokens 
 
 
--- Tables for Instruction info
+-- Gets the origin place for the program.
+getOrigin :: [([Label], Line)] -> (Int, [([Label], Line)])
+getOrigin ((_, (AssemLine ORIGIN ((ImmArg (Immediate i)) : []))) : r) = (i, r) 
+getOrigin _ = error "Initial Instruction is not an origin"
+
+createSymbolTable :: Int -> [([Label], Line)] -> ([(Label, Int)], [Line])
+createSymbolTable o' p' = let h _ [] l = (l, (map snd p'))
+                              h o p l = h (o + lineSize (snd (head p))) (tail p) (concat [[(lbl, o) | lbl <- (fst (head p))],  l])
+                          in h o' p' []
+
+-- Tables for Instruction info -- 
 
 -- Returns the number of args expected for each instruction
 numArgs :: Instruction -> Int
@@ -155,14 +160,13 @@ lineToML _ = error ("Unable to convert to ML!")
 
 -- Get only the last s bits of n
 lastBits :: Int -> Int -> Int
-lastBits n s = n .&. ((2 ^ s) - 1)
+lastBits n s = n .&. ((1 `shiftL` s) - 1)
 
 -- Can probably reduce this?
 constructBinary :: [(Int, Int)] -> Int
 constructBinary b = let h ((n, s):xs) o = h xs ((shiftL o s) .|. (lastBits n s))
                         h [] o = o
                     in h b 0
-
 
 -- TODO
 tokensToLine :: [Token] -> ([Label], Line)
@@ -212,11 +216,9 @@ tokenToAssemblerDirection (AssemblerToken ".origin" ) = ORIGIN
 tokenToAssemblerDirection (AssemblerToken ".put"    ) = PUT
 tokenToAssemblerDirection t = error ("Cannot convert to Assembler Direction " ++ (str t))
 
--- TODO
---createSymbolTable :: [[Token]] -> [Label]
 
 
--- Converts "Strings of the form '{digits}[base]' to Int"
+-- Converts Strings of the form '[0base]{digits}' to Int
 -- TODO : Add negative support
 stringToNumeral :: String -> Int
 stringToNumeral s = let numType n -- Get the base of the number
@@ -254,7 +256,5 @@ opcodes = [ "add"
 assemblerInstructions :: [String]
 assemblerInstructions = [ "origin"
                         , "put" ]
-
-
 
 
