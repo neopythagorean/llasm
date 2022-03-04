@@ -12,11 +12,19 @@ import Data.Maybe
 import System.Environment
 import Control.Monad
 
-data Token = LabelToken { str :: String } | OpcodeToken { str :: String } | RegisterToken { str :: String } | ImmediateToken { str :: String } | AssemblerToken { str :: String } deriving ( Show )
+data Token = LabelToken     { str :: String } 
+           | OpcodeToken    { str :: String }
+           | RegisterToken  { str :: String }
+           | ImmediateToken { str :: String }
+           | AssemblerToken { str :: String } deriving ( Show )
 
 data Register = Register { reg :: Int } deriving ( Show, Eq )
 
-data Label = Label { text :: String } deriving ( Show, Eq )
+data Label = Label { text :: String, labelType :: LabelType } deriving ( Show )
+instance Eq Label where
+    (Label a _) == (Label b _) = a == b
+
+data LabelType = LabelDefinition | LabelRelative | LabelAbsolute | LabelInferred deriving ( Show, Eq )
 
 data Immediate = Immediate { imm :: Int } deriving ( Show, Eq )
 
@@ -26,7 +34,7 @@ data Instruction = ADD | AND | BR | JMP | JSR | JSRR | LD | LDI | LDR | LEA | NO
 
 data AssemblerDirection = ORIGIN | PUT deriving ( Show, Eq )
 
-data Line = InstLine { inst :: Instruction, args :: [Argument] } | AssemLine { dir :: AssemblerDirection, args :: [Argument] } deriving ( Show, Eq )
+data Line = InstLine { inst :: Instruction, args :: [Argument], lineNum :: Int } | AssemLine { dir :: AssemblerDirection, args :: [Argument], lineNum :: Int } deriving ( Show, Eq )
 
 main :: IO ()
 main = do
@@ -42,8 +50,11 @@ main = do
         let asmlines = map tokensToLine corrected
         let (origin, rest) = getOrigin asmlines
         let (symbols, asmlines) = createSymbolTable origin rest
+        let resolved = resolveAllLabels symbols asmlines
+        let ml = concat $ ([origin] : (map lineToML resolved))
         mapM_ print symbols
-        mapM_ print asmlines
+        mapM_ print resolved
+        mapM_ print ml
 
 printUsage :: IO ()
 printUsage = do
@@ -105,57 +116,80 @@ moveLabelsDown prg = let h [] _ p' = reverse p' -- Hacky reverse, fix later?
 stringToRegister :: String -> Register
 stringToRegister s = Register { reg = read $ tail s :: Int }
 
-stringToLabel :: String -> Label
-stringToLabel s = Label { text = (init s) }
-
--- Get all labels defined in the program
-getLabels :: [[Token]] -> [Label]
-getLabels prg =
-    let tokens = concat $ map (filter isLabelToken) prg
-    in map (stringToLabel . str) tokens 
-
-
 -- Gets the origin place for the program.
 getOrigin :: [([Label], Line)] -> (Int, [([Label], Line)])
-getOrigin ((_, (AssemLine ORIGIN ((ImmArg (Immediate i)) : []))) : r) = (i, r) 
+getOrigin ((_, (AssemLine ORIGIN ((ImmArg (Immediate i)) : []) _)) : r) = (i, r) 
 getOrigin _ = error "Initial Instruction is not an origin"
 
 createSymbolTable :: Int -> [([Label], Line)] -> ([(Label, Int)], [Line])
-createSymbolTable o' p' = let h _ [] l = (l, (map snd p'))
-                              h o p l = h (o + lineSize (snd (head p))) (tail p) (concat [[(lbl, o) | lbl <- (fst (head p))],  l])
-                          in h o' p' []
+createSymbolTable o' p' = let h _ [] l q = (l, (reverse q))
+                              h o p l q = h (o + lineSize (snd (head p))) (tail p) (concat [[(lbl, o) | lbl <- (fst (head p))],  l]) ((replaceLineNum (snd (head p)) o) : q)
+                          in h o' p' [] []
+
+replaceLineNum :: Line -> Int -> Line
+replaceLineNum (InstLine i a _) n = InstLine i a n
+replaceLineNum (AssemLine d a _) n = AssemLine d a n
+
+getLabelResolution :: [(Label, Int)] -> Label -> Int
+getLabelResolution symb l = let r = lookup l symb
+                            in if (isNothing r) then error ("Label not found in symbol tabel!")
+                               else fromJust r
+
+resolveLabel :: [(Label, Int)] -> Int -> Argument -> Argument
+resolveLabel symb n (LabelArg l)
+    | (labelType l) == LabelRelative = ImmArg $ Immediate (getLabelResolution symb l - n)
+    | (labelType l) == LabelAbsolute = ImmArg $ Immediate (getLabelResolution symb l)
+    | (labelType l) == LabelInferred = ImmArg $ Immediate (getLabelResolution symb l)
+resolveLabel _ _ a = a
+
+resolveLabelsLine :: [(Label, Int)] -> Line -> Line
+resolveLabelsLine symb (InstLine o args n) = InstLine o (map (resolveLabel symb n) args) n
+resolveLabelsLine symb (AssemLine d args n) = AssemLine d (map (resolveLabel symb n) args) n
+
+resolveAllLabels :: [(Label, Int)] -> [Line] -> [Line]
+resolveAllLabels symb lines = map (resolveLabelsLine symb) lines
 
 -- Tables for Instruction info -- 
 
--- Returns the number of args expected for each instruction
-numArgs :: Instruction -> Int
-numArgs ADD  = 3
-numArgs AND  = 3
-numArgs BR   = 2
-numArgs JMP  = 1
-numArgs JSR  = 1
-numArgs JSRR = 1
-numArgs LD   = 2
-numArgs LDI  = 2
-numArgs LDR  = 3
-numArgs LEA  = 2
-numArgs NOT  = 1
-numArgs RET  = 0
-numArgs RTI  = 0
-numArgs ST   = 2
-numArgs STI  = 2
-numArgs STR  = 3
-numArgs TRAP = 1
-
 -- Get the amount of addressible space this line takes up
 lineSize :: Line -> Int
-lineSize (InstLine _ _)  = 1 -- All LC3 Instructions are only 1 address in memory
-lineSize (AssemLine _ _) = 1
+lineSize (InstLine _ _ _)  = 1 -- All LC3 Instructions are only 1 address in memory
+lineSize (AssemLine PUT args _) = length args
+lineSize (AssemLine _ _ _) = 1
+
+getArgValue :: Argument -> Int
+getArgValue (RegArg (Register r)) = r
+getArgValue (ImmArg (Immediate i)) = i
+getArgValue _ = error ("Cannot get Argument value!")
+
+isInstLine :: Line -> Bool
+isInstLine (InstLine _ _ _) = True
+isInstLine _ = False
+
+isAssemLine :: Line -> Bool
+isAssemLine = not . isInstLine
 
 lineToML :: Line -> [Int]
-lineToML (InstLine ADD (RegArg (Register dr) : RegArg (Register sr1) : RegArg (Register sr2) : [])) = [ constructBinary [(0b0001, 4), (dr, 3), (sr1, 3), (0b000, 3), (sr2, 3)] ]
-lineToML (InstLine ADD (RegArg (Register dr) : RegArg (Register sr)  : ImmArg (Immediate i)  : [])) = [ constructBinary [(0b0001, 4), (dr, 3), (sr, 3), (0b1, 1), (i, 5)] ]
-lineToML (AssemLine _ _) = [0b1010111101010000]
+lineToML (InstLine  ADD  (RegArg (Register dr) : RegArg (Register sr1) : RegArg (Register sr2) : []) _) = [constructBinary [(0b0001, 4), (dr, 3),     (sr1, 3), (0b000, 3), (sr2, 3)]]
+lineToML (InstLine  ADD  (RegArg (Register dr) : RegArg (Register sr)  : ImmArg (Immediate i)  : []) _) = [constructBinary [(0b0001, 4), (dr, 3),     (sr, 3),  (0b1, 1),   (i, 5)]]
+lineToML (InstLine  AND  (RegArg (Register dr) : RegArg (Register sr1) : RegArg (Register sr2) : []) _) = [constructBinary [(0b0101, 4), (dr, 3),     (sr1, 3), (0b000, 3), (sr2, 3)]]
+lineToML (InstLine  AND  (RegArg (Register dr) : RegArg (Register sr)  : ImmArg (Immediate i)  : []) _) = [constructBinary [(0b0101, 4), (dr, 3),     (sr, 3),  (0b1, 1),   (i, 5)]]
+lineToML (InstLine  NOT  (RegArg (Register dr) : RegArg (Register sr)  : [])                         _) = [constructBinary [(0b1001, 4), (dr, 3),     (sr, 3),  (0b111111, 6)]]
+lineToML (InstLine  BR   (ImmArg (Immediate c) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b0000, 4), (c, 3),      (o, 9)]]
+lineToML (InstLine  JMP  (RegArg (Register br) : [])                                                 _) = [constructBinary [(0b1100, 4), (0b000, 3),  (br, 3),  (0b000000, 6)]]
+lineToML (InstLine  JSR  (ImmArg (Immediate o) : [])                                                 _) = [constructBinary [(0b0100, 4), (0b1, 1),    (o, 11)]]
+lineToML (InstLine  JSRR (RegArg (Register br) : [])                                                 _) = [constructBinary [(0b0100, 4), (0b000, 3),  (br, 3),  (0b000000, 6)]]
+lineToML (InstLine  RET  []                                                                          _) = [0b0100000111000000] -- Ret is just JSR %7
+lineToML (InstLine  LD   (RegArg (Register dr) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b0010, 4), (dr, 3),     (o, 9)]]
+lineToML (InstLine  LDI  (RegArg (Register dr) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b1010, 4), (dr, 3),     (o, 9)]]
+lineToML (InstLine  LDR  (RegArg (Register sr) : RegArg (Register br)  : ImmArg (Immediate o)  : []) _) = [constructBinary [(0b0110, 4), (sr, 3),     (br, 3),  (o, 6)]]
+lineToML (InstLine  LEA  (RegArg (Register dr) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b1110, 4), (dr, 3),     (o, 9)]]
+lineToML (InstLine  ST   (RegArg (Register sr) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b0011, 4), (sr, 3),     (o, 9)]]
+lineToML (InstLine  STI  (RegArg (Register sr) : ImmArg (Immediate o)  : [])                         _) = [constructBinary [(0b1011, 4), (sr, 3),     (o, 9)]]
+lineToML (InstLine  STR  (RegArg (Register sr) : RegArg (Register br)  : ImmArg (Immediate o)  : []) _) = [constructBinary [(0b0111, 4), (sr, 3),     (br, 3),  (o, 6)]]
+lineToML (InstLine  TRAP (ImmArg (Immediate o) : [])                                                 _) = [constructBinary [(0b1111, 4), (0b0000, 4), (o, 8)]]
+lineToML (InstLine  RTI  []                                                                          _) = [0b1000000000000000]
+lineToML (AssemLine PUT args _) = map getArgValue args
 lineToML _ = error ("Unable to convert to ML!")
 
 -- Get only the last s bits of n
@@ -173,17 +207,19 @@ tokensToLine :: [Token] -> ([Label], Line)
 tokensToLine l = let labels = map tokenToLabel $ filter isLabelToken l -- List of labels defined on this line
                      filt = filter (not . isLabelToken) l    -- List of Tokens w/o the labels
                      args = map tokenToArgument . tail
-                 in (labels, (either (\a -> (AssemLine a (args filt))) (\i -> (InstLine i (args filt))) (tokenToOperation $ head filt)))
+                 in (labels, (either (\a -> (AssemLine a (args filt) 0)) (\i -> (InstLine i (args filt) 0)) (tokenToOperation $ head filt)))
 
 tokenToLabel :: Token -> Label
-tokenToLabel (LabelToken s) = Label (init s)
+tokenToLabel (LabelToken s) = Label (init s) LabelDefinition
 tokenToLabel _ = error ("Cannot create label!")
 
 tokenToArgument :: Token -> Argument
 tokenToArgument (RegisterToken s) = RegArg $ Register $ stringToNumeral $ tail s
+tokenToArgument (ImmediateToken ('$':':':xs)) = LabelArg $ Label xs LabelRelative
+tokenToArgument (ImmediateToken ('$':'*':xs)) = LabelArg $ Label xs LabelAbsolute
 tokenToArgument (ImmediateToken s)
     | isDigit $ head $ tail s = ImmArg $ Immediate $ stringToNumeral $ tail s
-    | otherwise = LabelArg $ Label $ tail s
+    | otherwise = LabelArg $ Label (tail s) LabelInferred
 tokenToArgument _ = error ("Cannot convert token to argument!")
 
 tokenToOperation :: Token -> Either AssemblerDirection Instruction
@@ -215,8 +251,6 @@ tokenToAssemblerDirection :: Token -> AssemblerDirection
 tokenToAssemblerDirection (AssemblerToken ".origin" ) = ORIGIN
 tokenToAssemblerDirection (AssemblerToken ".put"    ) = PUT
 tokenToAssemblerDirection t = error ("Cannot convert to Assembler Direction " ++ (str t))
-
-
 
 -- Converts Strings of the form '[0base]{digits}' to Int
 -- TODO : Add negative support
