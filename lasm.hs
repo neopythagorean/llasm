@@ -7,10 +7,16 @@ import Data.List
 import Data.Char
 import Data.Typeable
 import Data.Monoid
+import Data.Int
+import Data.Word
 import Data.Bits
 import Data.Maybe
 import System.Environment
+import System.IO
 import Control.Monad
+import qualified Data.ByteString.Lazy as BL
+import Data.Binary.Put
+
 
 data Token = LabelToken     { str :: String } 
            | OpcodeToken    { str :: String }
@@ -44,17 +50,20 @@ main = do
         contents <- readFile $ head args
         let srclines = lines contents
         let tokenlines = filter (not . null) $ map (tokenizeLine . removeComments) srclines
-        --mapM_ print $ map isSignificantLine tokenlines
-        --mapM_ print tokenlines
         let corrected = moveLabelsDown tokenlines
         let asmlines = map tokensToLine corrected
         let (origin, rest) = getOrigin asmlines
         let (symbols, asmlines) = createSymbolTable origin rest
         let resolved = resolveAllLabels symbols asmlines
         let ml = concat $ ([origin] : (map lineToML resolved))
+        let words = map (\i -> fromIntegral (i :: Int) :: Word16) ml
+        -- Write file out
+        fileOut <- openFile "a.bin" WriteMode
+        BL.hPutStr fileOut $ runPut (mapM_ putWord16le words)
+        hClose fileOut
         mapM_ print symbols
         mapM_ print resolved
-        mapM_ print ml
+        mapM_ print words
 
 printUsage :: IO ()
 printUsage = do
