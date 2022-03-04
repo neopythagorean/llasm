@@ -1,5 +1,5 @@
--- LASM micro assembler
--- for the LC3 computer
+-- LLASM micro assembler
+-- the Little LC3 Assembler
 
 {-# LANGUAGE BinaryLiterals #-}
 
@@ -67,8 +67,9 @@ main = do
 
 printUsage :: IO ()
 printUsage = do
-    putStrLn $ intercalate "\n" [ "-- The Lazy Assembler --"
-                                , "      For the LC-3" ]
+    putStrLn $ intercalate "\n" [ "llasm - The Little LC3 Assembler"
+                                , "usage: "
+                                , "    llasm [input file]" ]
 
 -- Todo, redo this to not just do words
 tokenizeLine :: String -> [Token]
