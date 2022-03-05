@@ -59,7 +59,7 @@ main = do
         let words = map (\i -> fromIntegral (i :: Int) :: Word16) ml
         -- Write file out
         fileOut <- openFile "a.bin" WriteMode
-        BL.hPutStr fileOut $ runPut (mapM_ putWord16le words)
+        BL.hPutStr fileOut $ runPut (mapM_ putWord16be words)
         hClose fileOut
         mapM_ print symbols
         mapM_ print resolved
