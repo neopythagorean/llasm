@@ -1,5 +1,3 @@
--- LLASM micro assembler
--- the Little LC3 Assembler
 
 {-# LANGUAGE BinaryLiterals #-}
 
@@ -42,28 +40,34 @@ data AssemblerDirection = ORIGIN | PUT deriving ( Show, Eq )
 
 data Line = InstLine { inst :: Instruction, args :: [Argument], lineNum :: Int } | AssemLine { dir :: AssemblerDirection, args :: [Argument], lineNum :: Int } deriving ( Show, Eq )
 
-main :: IO ()
-main = do
-    args <- getArgs
-    if null args then printUsage
-    else do
-        contents <- readFile $ head args
-        let srclines = lines contents
-        let tokenlines = filter (not . null) $ map (tokenizeLine . removeComments) srclines
-        let corrected = moveLabelsDown tokenlines
-        let asmlines = map tokensToLine corrected
-        let (origin, rest) = getOrigin asmlines
-        let (symbols, asmlines) = createSymbolTable origin rest
-        let resolved = resolveAllLabels symbols asmlines
-        let ml = concat $ ([origin] : (map lineToML resolved))
-        let words = map (\i -> fromIntegral (i :: Int) :: Word16) ml
-        -- Write file out
-        fileOut <- openFile "a.bin" WriteMode
-        BL.hPutStr fileOut $ runPut (mapM_ putWord16be words)
-        hClose fileOut
-        mapM_ print symbols
-        mapM_ print resolved
-        mapM_ print words
+--main :: IO ()
+--main = do
+--    args <- getArgs
+--    if null args then printUsage
+--    else do
+--        contents <- readFile $ head args
+--        writeMLOut "a.bin" $ assemble contents
+
+
+assemble :: String -> [Word16]
+assemble program = 
+    let srclines = lines program
+        tokenlines = filter (not . null) $ map (tokenizeLine . removeComments) srclines
+        corrected = moveLabelsDown tokenlines
+        linelines = map tokensToLine corrected
+        (origin, rest) = getOrigin linelines
+        (symbols, asmlines) = createSymbolTable origin rest
+        resolved = resolveAllLabels symbols asmlines
+        ml = concat $ ([origin] : (map lineToML resolved))
+        words = map (\i -> fromIntegral (i :: Int) :: Word16) ml
+    in words
+
+writeMLOut :: String -> [Word16] -> IO ()
+writeMLOut outname ml = do
+    fileOut <- openFile outname WriteMode
+    BL.hPutStr fileOut $ runPut (mapM_ putWord16be ml)
+    hClose fileOut
+
 
 printUsage :: IO ()
 printUsage = do
@@ -237,26 +241,6 @@ tokenToOperation (OpcodeToken    op) = Right $ tokenToInstruction (OpcodeToken o
 tokenToOperation (AssemblerToken as) = Left $ tokenToAssemblerDirection (AssemblerToken as)
 tokenToOperation _ = error ("Token is not an operation!")
 
-tokenToInstruction :: Token -> Instruction
-tokenToInstruction (OpcodeToken "add"  ) = ADD 
-tokenToInstruction (OpcodeToken "and"  ) = AND
-tokenToInstruction (OpcodeToken "br"   ) = BR 
-tokenToInstruction (OpcodeToken "jmp"  ) = JMP
-tokenToInstruction (OpcodeToken "jsr"  ) = JSR
-tokenToInstruction (OpcodeToken "jsrr" ) = JSRR
-tokenToInstruction (OpcodeToken "ld"   ) = LD
-tokenToInstruction (OpcodeToken "ldi"  ) = LDI
-tokenToInstruction (OpcodeToken "ldr"  ) = LDR
-tokenToInstruction (OpcodeToken "lea"  ) = LEA
-tokenToInstruction (OpcodeToken "not"  ) = NOT
-tokenToInstruction (OpcodeToken "ret"  ) = RET
-tokenToInstruction (OpcodeToken "rti"  ) = RTI
-tokenToInstruction (OpcodeToken "st"   ) = ST
-tokenToInstruction (OpcodeToken "sti"  ) = STI
-tokenToInstruction (OpcodeToken "str"  ) = STR
-tokenToInstruction (OpcodeToken "trap" ) = TRAP
-tokenToInstruction _ = error ("Cannot convert to Instruction")
-
 tokenToAssemblerDirection :: Token -> AssemblerDirection
 tokenToAssemblerDirection (AssemblerToken ".origin" ) = ORIGIN
 tokenToAssemblerDirection (AssemblerToken ".put"    ) = PUT
@@ -279,26 +263,37 @@ stringToNumeral s = let numType n -- Get the base of the number
                     in fromJust $ convnum (numType s) $ removeType s -- TODO Add error checking to this (handle fromJust)
 
 opcodes :: [String] 
-opcodes = [ "add"
-          , "and"
-          , "br"
-          , "jmp"
-          , "jsr"
-          , "jsrr"
-          , "ld"
-          , "ldi"
-          , "ldr"
-          , "lea"
-          , "not"
-          , "ret"
-          , "rti"
-          , "st"
-          , "sti"
-          , "str"
-          , "trap" ]
+opcodes = map fst instructions
 
-assemblerInstructions :: [String]
-assemblerInstructions = [ "origin"
-                        , "put" ]
+tokenToInstruction :: Token -> Instruction
+tokenToInstruction (OpcodeToken s) = let r = lookup s instructions
+                                     in if isNothing r then error ("Unknown opcode")
+                                        else fromJust r
+tokenToInstruction _ = error ("Cannot convert to Instruction")
+
+instructions :: [(String, Instruction)]
+instructions = [ ( "add",  ADD )
+               , ( "and",  AND )
+               , ( "br",   BR )
+               , ( "jmp",  JMP )
+               , ( "jsr",  JSR )
+               , ( "jsrr", JSRR )
+               , ( "ld",   LD )
+               , ( "ldi",  LDI )
+               , ( "ldr",  LDR )
+               , ( "lea",  LEA )
+               , ( "not",  NOT )
+               , ( "ret",  RET )
+               , ( "rti",  RTI )
+               , ( "st",   ST )
+               , ( "sti",  STI )
+               , ( "str",  STR )
+               , ( "trap", TRAP ) ]
+
+
+
+--assemblerInstructions :: [String]
+--assemblerInstructions = [ ( ".origin", ORIGIN )
+--                        , ( ".put", PUT ) ]
 
 
