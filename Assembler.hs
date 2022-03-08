@@ -1,5 +1,11 @@
-
 {-# LANGUAGE BinaryLiterals #-}
+
+module Assembler
+    (
+      assemble
+    , writeMLOut
+    , printUsage
+    ) where
 
 import Data.List
 import Data.Char
