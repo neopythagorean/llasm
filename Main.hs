@@ -1,14 +1,29 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Main where
 
 import Assembler
 import System.Environment
 
+import System.Console.CmdArgs
+
+data LLASM = LLASM
+    { inputFile :: String
+    , outputFile :: String
+    } deriving (Data, Typeable, Show, Eq)
+
+
+argsDef = LLASM { inputFile = def &= args &= typ "FILE"
+                , outputFile = "a.bin" &= help "Output file location"
+                }
+
 main :: IO ()
 main = do
-    args <- getArgs
-    if null args then printUsage
-    else do
-        contents <- readFile $ head args
-        writeMLOut "a.bin" $ assemble contents
+    args <- cmdArgs argsDef
+    contents <- readFile $ inputFile args
+    writeMLOut (outputFile args) $ assemble contents
+
+
+
 
 
