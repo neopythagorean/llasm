@@ -1,10 +1,8 @@
 {-# LANGUAGE BinaryLiterals #-}
 
 module Assembler
-    (
-      assemble
+    ( assemble
     , writeMLOut
-    , printUsage
     ) where
 
 import Data.List
@@ -42,18 +40,9 @@ data Argument = ImmArg Immediate | RegArg Register | LabelArg Label deriving ( S
 
 data Instruction = ADD | AND | BR | JMP | JSR | JSRR | LD | LDI | LDR | LEA | NOT | RET | RTI | ST | STI | STR | TRAP deriving ( Show, Eq )
 
-data AssemblerDirection = ORIGIN | PUT deriving ( Show, Eq )
+data AssemblerDirection = ORIGIN | PUT | DEFINE deriving ( Show, Eq )
 
 data Line = InstLine { inst :: Instruction, args :: [Argument], lineNum :: Int } | AssemLine { dir :: AssemblerDirection, args :: [Argument], lineNum :: Int } deriving ( Show, Eq )
-
---main :: IO ()
---main = do
---    args <- getArgs
---    if null args then printUsage
---    else do
---        contents <- readFile $ head args
---        writeMLOut "a.bin" $ assemble contents
-
 
 assemble :: String -> [Word16]
 assemble program = 
@@ -74,12 +63,6 @@ writeMLOut outname ml = do
     BL.hPutStr fileOut $ runPut (mapM_ putWord16be ml)
     hClose fileOut
 
-
-printUsage :: IO ()
-printUsage = do
-    putStrLn $ intercalate "\n" [ "llasm - The Little LC3 Assembler"
-                                , "usage: "
-                                , "    llasm [input file]" ]
 
 -- Todo, redo this to not just do words
 tokenizeLine :: String -> [Token]
@@ -233,12 +216,16 @@ tokenToLabel :: Token -> Label
 tokenToLabel (LabelToken s) = Label (init s) LabelDefinition
 tokenToLabel _ = error ("Cannot create label!")
 
+isNumeric :: Char -> Bool
+isNumeric = getAny . foldMap (Any .) [isDigit, ((==) '-')]
+
+
 tokenToArgument :: Token -> Argument
 tokenToArgument (RegisterToken s) = RegArg $ Register $ stringToNumeral $ tail s
 tokenToArgument (ImmediateToken ('$':':':xs)) = LabelArg $ Label xs LabelRelative
 tokenToArgument (ImmediateToken ('$':'*':xs)) = LabelArg $ Label xs LabelAbsolute
 tokenToArgument (ImmediateToken s)
-    | isDigit $ head $ tail s = ImmArg $ Immediate $ stringToNumeral $ tail s
+    | isNumeric $ head $ tail s = ImmArg $ Immediate $ stringToNumeral $ tail s
     | otherwise = LabelArg $ Label (tail s) LabelInferred
 tokenToArgument _ = error ("Cannot convert token to argument!")
 
@@ -246,11 +233,6 @@ tokenToOperation :: Token -> Either AssemblerDirection Instruction
 tokenToOperation (OpcodeToken    op) = Right $ tokenToInstruction (OpcodeToken op)
 tokenToOperation (AssemblerToken as) = Left $ tokenToAssemblerDirection (AssemblerToken as)
 tokenToOperation _ = error ("Token is not an operation!")
-
-tokenToAssemblerDirection :: Token -> AssemblerDirection
-tokenToAssemblerDirection (AssemblerToken ".origin" ) = ORIGIN
-tokenToAssemblerDirection (AssemblerToken ".put"    ) = PUT
-tokenToAssemblerDirection t = error ("Cannot convert to Assembler Direction " ++ (str t))
 
 -- Converts Strings of the form '[0base]{digits}' to Int
 -- TODO : Add negative support
@@ -266,7 +248,10 @@ stringToNumeral s = let numType n -- Get the base of the number
                             | (isDigit $ head q) && (length q) > 2 && flip elem "hxosbd" (head $ tail q) = drop 2 q
                             | otherwise = q
                         convnum d s = fmap sum . sequence $ zipWith (liftM2 (*)) (map (\c -> elemIndex c d) s) (reverse [Just ((length d)^x) | x<-[0..(length s - 1)]])
-                    in fromJust $ convnum (numType s) $ removeType s -- TODO Add error checking to this (handle fromJust)
+                        negative ('-':t) = (-1, t)
+                        negative t       = (1, t)
+                        (m, n) = negative s
+                    in m * (fromJust $ convnum (numType n) $ removeType n) -- TODO Add error checking to this (handle fromJust)
 
 opcodes :: [String] 
 opcodes = map fst instructions
@@ -297,9 +282,15 @@ instructions = [ ( "add",  ADD )
                , ( "trap", TRAP ) ]
 
 
+tokenToAssemblerDirection :: Token -> AssemblerDirection
+tokenToAssemblerDirection (AssemblerToken s) = let r = lookup s assemblerInstructions
+                                               in if isNothing r then error ("Unknown assembler direction")
+                                                  else fromJust r
+tokenToAssemblerDirection _ = error ("Cannot convert to Assembler Direction")
 
---assemblerInstructions :: [String]
---assemblerInstructions = [ ( ".origin", ORIGIN )
---                        , ( ".put", PUT ) ]
+assemblerInstructions :: [(String, AssemblerDirection)]
+assemblerInstructions = [ ( ".origin", ORIGIN )
+                        , ( ".put",    PUT )
+                        , ( ".define", DEFINE ) ]
 
 
