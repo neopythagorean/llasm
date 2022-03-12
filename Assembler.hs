@@ -63,7 +63,6 @@ writeMLOut outname ml = do
     BL.hPutStr fileOut $ runPut (mapM_ putWord16be ml)
     hClose fileOut
 
-
 -- Todo, redo this to not just do words
 tokenizeLine :: String -> [Token]
 tokenizeLine = map tokenize . words
@@ -134,6 +133,7 @@ replaceLineNum (InstLine i a _) n = InstLine i a n
 replaceLineNum (AssemLine d a _) n = AssemLine d a n
 
 getLabelResolution :: [(Label, Int)] -> Label -> Int
+getLabelResolution _ (Label ('[':s) _) = stringToNumeral $ init s
 getLabelResolution symb l = let r = lookup l symb
                             in if (isNothing r) then error ("Label not found in symbol tabel!")
                                else fromJust r
@@ -197,7 +197,7 @@ lineToML _ = error ("Unable to convert to ML!")
 
 -- Get only the last s bits of n
 lastBits :: Int -> Int -> Int
-lastBits n s = n .&. ((1 `shiftL` s) - 1)
+lastBits n s = n .&. (pred ((shiftL 1) s))
 
 -- Can probably reduce this?
 constructBinary :: [(Int, Int)] -> Int
@@ -280,7 +280,6 @@ instructions = [ ( "add",  ADD )
                , ( "sti",  STI )
                , ( "str",  STR )
                , ( "trap", TRAP ) ]
-
 
 tokenToAssemblerDirection :: Token -> AssemblerDirection
 tokenToAssemblerDirection (AssemblerToken s) = let r = lookup s assemblerInstructions
