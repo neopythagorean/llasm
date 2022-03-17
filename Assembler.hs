@@ -19,11 +19,13 @@ import Control.Monad
 import qualified Data.ByteString.Lazy as BL
 import Data.Binary.Put
 
+import Debug.Trace
 
 data Token = LabelToken     { str :: String } 
            | OpcodeToken    { str :: String }
            | RegisterToken  { str :: String }
            | ImmediateToken { str :: String }
+           | StringToken    { str :: String }
            | AssemblerToken { str :: String } deriving ( Show )
 
 data Register = Register { reg :: Int } deriving ( Show, Eq )
@@ -65,16 +67,41 @@ writeMLOut outname ml = do
 
 -- Todo, redo this to not just do words
 tokenizeLine :: String -> [Token]
-tokenizeLine = map tokenize . words
+tokenizeLine s = let h :: [Token] -> String -> [Token]
+                     h t "" = reverse t
+                     h t s  = let (tok, s') = tokenize s
+                              in h (maybe t (\x -> x:t) tok) s'
+                 in h [] s
 
-tokenize :: String -> Token
+
+tokenize :: String -> (Maybe Token, String)
+tokenize "" = (Nothing, "")
+tokenize ('"':s) = let (t, c) = getStringDef s in (Just $ StringToken t, c)
 tokenize s
-    | head s == '%' = RegisterToken s
-    | head s == '$' = ImmediateToken s
-    | head s == '.' = AssemblerToken s
-    | last s == ':' = LabelToken s
-    | elem (map toLower s) opcodes = OpcodeToken s
+    | isSpace $ head s = tokenize $ tail s -- Ignore white space
+    | c == '%' = (Just $ RegisterToken w, wc)
+    | c == '$' = (Just $ ImmediateToken w, wc)
+    | c == '.' = (Just $ AssemblerToken w, wc)
+    | last w == ':' = (Just $ LabelToken w, wc)
+    | elem (map toLower w) opcodes = (Just $ OpcodeToken w, wc)
     | otherwise = error ("Unable to tokenize string \"" ++ s ++ "\"")
+    where c  = head w
+          w  = head wx
+          wc = drop (length w) s
+          wx = words s
+          
+
+
+getStringDef :: String -> (String, String)
+getStringDef s = let h :: String -> String -> (String, String)
+                     h "" o = (o, "")
+                     h ('"':i) o = (o, i)
+                     h ('\\':'n':i) o = h i ('\n':o)
+                     h ('\\':'"':i) o = h i ('"':o)
+                     h ('\\':'\\':i) o = h i ('\\':o)
+                     h (i:is) o = h is (i:o)
+                     (f, l) = h s ""
+                 in (reverse f, l)
 
 isOpcodeLine :: [Token] -> Bool
 isOpcodeLine = any isOpcodeToken
