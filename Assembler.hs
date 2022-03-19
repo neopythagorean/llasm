@@ -42,7 +42,7 @@ data Argument = ImmArg Immediate | RegArg Register | LabelArg Label deriving ( S
 
 data Instruction = ADD | AND | BR | JMP | JSR | JSRR | LD | LDI | LDR | LEA | NOT | RET | RTI | ST | STI | STR | TRAP deriving ( Show, Eq )
 
-data AssemblerDirection = ORIGIN | PUT | DEFINE deriving ( Show, Eq )
+data AssemblerDirection = ORIGIN | PUT | DEFINE | STRINGZ deriving ( Show, Eq )
 
 data Line = InstLine { inst :: Instruction, args :: [Argument], lineNum :: Int } | AssemLine { dir :: AssemblerDirection, args :: [Argument], lineNum :: Int } deriving ( Show, Eq )
 
@@ -220,11 +220,12 @@ lineToML (InstLine  STR  (RegArg (Register sr) : RegArg (Register br)  : ImmArg 
 lineToML (InstLine  TRAP (ImmArg (Immediate o) : [])                                                 _) = [constructBinary [(0b1111, 4), (0b0000, 4), (o, 8)]]
 lineToML (InstLine  RTI  []                                                                          _) = [0b1000000000000000]
 lineToML (AssemLine PUT args _) = map getArgValue args
+lineToML (AssemLine STRINGZ args _) = concat [(map getArgValue args), [0]]
 lineToML _ = error ("Unable to convert to ML!")
 
 -- Get only the last s bits of n
 lastBits :: Int -> Int -> Int
-lastBits n s = n .&. (pred ((shiftL 1) s))
+lastBits n s = n .&. pred ((shiftL 1) s)
 
 -- Can probably reduce this?
 constructBinary :: [(Int, Int)] -> Int
@@ -236,7 +237,7 @@ constructBinary b = let h ((n, s):xs) o = h xs ((shiftL o s) .|. (lastBits n s))
 tokensToLine :: [Token] -> ([Label], Line)
 tokensToLine l = let labels = map tokenToLabel $ filter isLabelToken l -- List of labels defined on this line
                      filt = filter (not . isLabelToken) l    -- List of Tokens w/o the labels
-                     args = map tokenToArgument . tail
+                     args = concat . map tokenToArgument . tail
                  in (labels, (either (\a -> (AssemLine a (args filt) 0)) (\i -> (InstLine i (args filt) 0)) (tokenToOperation $ head filt)))
 
 tokenToLabel :: Token -> Label
@@ -247,13 +248,14 @@ isNumeric :: Char -> Bool
 isNumeric = getAny . foldMap (Any .) [isDigit, ((==) '-')]
 
 
-tokenToArgument :: Token -> Argument
-tokenToArgument (RegisterToken s) = RegArg $ Register $ stringToNumeral $ tail s
-tokenToArgument (ImmediateToken ('$':':':xs)) = LabelArg $ Label xs LabelRelative
-tokenToArgument (ImmediateToken ('$':'*':xs)) = LabelArg $ Label xs LabelAbsolute
+tokenToArgument :: Token -> [Argument]
+tokenToArgument (RegisterToken s) = [RegArg $ Register $ stringToNumeral $ tail s]
+tokenToArgument (ImmediateToken ('$':':':xs)) = [LabelArg $ Label xs LabelRelative]
+tokenToArgument (ImmediateToken ('$':'*':xs)) = [LabelArg $ Label xs LabelAbsolute]
 tokenToArgument (ImmediateToken s)
-    | isNumeric $ head $ tail s = ImmArg $ Immediate $ stringToNumeral $ tail s
-    | otherwise = LabelArg $ Label (tail s) LabelInferred
+    | isNumeric $ head $ tail s = [ImmArg $ Immediate $ stringToNumeral $ tail s]
+    | otherwise = [LabelArg $ Label (tail s) LabelInferred]
+tokenToArgument (StringToken s) = map (ImmArg . Immediate . ord) s 
 tokenToArgument _ = error ("Cannot convert token to argument!")
 
 tokenToOperation :: Token -> Either AssemblerDirection Instruction
@@ -317,6 +319,7 @@ tokenToAssemblerDirection _ = error ("Cannot convert to Assembler Direction")
 assemblerInstructions :: [(String, AssemblerDirection)]
 assemblerInstructions = [ ( ".origin", ORIGIN )
                         , ( ".put",    PUT )
-                        , ( ".define", DEFINE ) ]
+                        , ( ".define", DEFINE )
+                        , ( ".stringz", STRINGZ ) ]
 
 
